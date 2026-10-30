@@ -1,9 +1,11 @@
 mod category;
 mod clean;
 mod cli;
+mod database;
 mod disk;
 mod format;
 mod scan;
+mod simulator;
 mod tui;
 
 use std::io::{self, Write};
@@ -180,6 +182,16 @@ fn clean(
         format::count(items.len(), "item"),
         format::size(total)
     );
+    let permanent = items
+        .iter()
+        .filter(|item| item.category.always_permanent())
+        .count();
+    if mode == Mode::Trash && permanent > 0 {
+        println!(
+            "{} cannot go to the Trash and are deleted for good.",
+            format::count(permanent, "item")
+        );
+    }
 
     if dry_run {
         println!("Dry run, nothing changed.");

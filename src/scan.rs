@@ -8,21 +8,32 @@ use std::time::SystemTime;
 use rayon::prelude::*;
 
 use crate::category::{Category, added_at};
+use crate::simulator;
 
 pub struct ScanConfig {
     pub home: PathBuf,
     pub temp: PathBuf,
+    /// `/tmp`, shared by all users. `temp` is your own temp folder.
+    pub shared_temp: PathBuf,
     pub project_dirs: Vec<PathBuf>,
     pub downloads_days: u64,
 }
 
 impl ScanConfig {
     /// Big folders that never hold code projects. Skipping them keeps the project search fast.
+    /// OrbStack shows the files inside Docker there. Docker manages them, not you.
     pub fn project_skip_dirs(&self) -> Vec<PathBuf> {
-        ["Library", "Pictures", "Movies", "Music", "Applications"]
-            .iter()
-            .map(|dir| self.home.join(dir))
-            .collect()
+        [
+            "Library",
+            "Pictures",
+            "Movies",
+            "Music",
+            "Applications",
+            "OrbStack",
+        ]
+        .iter()
+        .map(|dir| self.home.join(dir))
+        .collect()
     }
 }
 
@@ -48,6 +59,10 @@ impl CategoryScan {
 }
 
 pub fn scan_category(category: Category, config: &ScanConfig) -> CategoryScan {
+    if category == Category::SimulatorRuntimes {
+        return scan_runtimes();
+    }
+
     let found = category.discover(config);
 
     let mut items: Vec<Item> = found
@@ -79,6 +94,31 @@ pub fn scan_category(category: Category, config: &ScanConfig) -> CategoryScan {
         category,
         items,
         issues: found.issues,
+    }
+}
+
+fn scan_runtimes() -> CategoryScan {
+    let (runtimes, issues) = match simulator::runtimes() {
+        Ok(runtimes) => (runtimes, Vec::new()),
+        Err(error) => (Vec::new(), vec![format!("{error:#}")]),
+    };
+
+    let mut items: Vec<Item> = runtimes
+        .iter()
+        .map(|runtime| Item {
+            category: Category::SimulatorRuntimes,
+            label: runtime.name(),
+            size: disk_size(&runtime.path),
+            modified: runtime.last_used(),
+            path: runtime.path.clone(),
+        })
+        .collect();
+    items.sort_by_key(|item| std::cmp::Reverse(item.size));
+
+    CategoryScan {
+        category: Category::SimulatorRuntimes,
+        items,
+        issues,
     }
 }
 
@@ -138,6 +178,7 @@ const DEPENDENCY_DIRS: &[(&str, &[&str])] = &[
     (".turbo", &["package.json"]),
     (".parcel-cache", &["package.json"]),
     ("Pods", &["Podfile"]),
+    (".build", &["Package.swift"]),
     (
         ".gradle",
         &[
@@ -187,7 +228,7 @@ pub fn find_project_deps(dir: &Path, skip: &[PathBuf], depth: u8) -> Vec<PathBuf
         .collect()
 }
 
-fn is_dependency_dir(path: &Path) -> bool {
+pub fn is_dependency_dir(path: &Path) -> bool {
     let (Some(name), Some(parent)) = (path.file_name().and_then(|n| n.to_str()), path.parent())
     else {
         return false;
@@ -206,12 +247,15 @@ fn should_skip(path: &Path, skip: &[PathBuf]) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with('.'));
-    let package = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| PACKAGE_EXTENSIONS.contains(&ext));
 
-    hidden || package || skip.iter().any(|dir| dir == path)
+    hidden || is_package(path) || skip.iter().any(|dir| dir == path)
+}
+
+/// Folders macOS shows as one file, like apps and photo libraries.
+pub fn is_package(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| PACKAGE_EXTENSIONS.contains(&ext))
 }
 
 #[cfg(test)]

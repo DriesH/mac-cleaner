@@ -13,7 +13,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Folder to search for node_modules, target, vendor, ... (repeatable). Default: your home folder
+    /// Folder to search for node_modules, target, vendor, databases, ... (repeatable). Default: your home folder
     #[arg(long = "projects-dir", value_name = "DIR", global = true)]
     pub project_dirs: Vec<PathBuf>,
 
@@ -75,6 +75,7 @@ impl Cli {
         Ok(ScanConfig {
             home,
             temp: std::env::temp_dir(),
+            shared_temp: PathBuf::from("/private/tmp"),
             project_dirs,
             downloads_days: self.downloads_days,
         })

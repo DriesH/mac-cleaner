@@ -9,7 +9,9 @@ use rayon::prelude::*;
 use trash::TrashContext;
 use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
+use crate::category::Category;
 use crate::scan::{Item, ScanConfig};
+use crate::simulator;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -26,8 +28,11 @@ impl Mode {
     }
 }
 
+/// A folder we may delete in, and how deep a path must be inside it.
+type Root = (PathBuf, usize);
+
 pub struct Cleaner {
-    roots: Vec<PathBuf>,
+    roots: Vec<Root>,
     trash: TrashContext,
 }
 
@@ -41,6 +46,8 @@ impl Cleaner {
             roots: [config.home.clone(), config.temp.clone()]
                 .into_iter()
                 .chain(config.project_dirs.iter().cloned())
+                .map(|root| (root, 2))
+                .chain([(config.shared_temp.clone(), 1)])
                 .collect(),
             trash,
         }
@@ -48,6 +55,12 @@ impl Cleaner {
 
     /// Permanent deletes add the freed bytes to `removed` while they run.
     pub fn remove(&self, item: &Item, mode: Mode, removed: &AtomicU64) -> Result<()> {
+        if item.category == Category::SimulatorRuntimes {
+            simulator::delete(&item.path)?;
+            removed.fetch_add(item.size, Ordering::Relaxed);
+            return Ok(());
+        }
+
         check_safe(&item.path, &self.roots)?;
 
         let mode = if item.category.always_permanent() {
@@ -90,8 +103,8 @@ fn remove_tree(path: &Path, removed: &AtomicU64) -> io::Result<()> {
     Ok(())
 }
 
-/// Last line of defense: only delete things at least two levels inside a scanned root folder.
-pub fn check_safe(path: &Path, roots: &[PathBuf]) -> Result<()> {
+/// Last line of defense: only delete things deep enough inside a scanned root folder.
+pub fn check_safe(path: &Path, roots: &[Root]) -> Result<()> {
     ensure!(
         path.is_absolute(),
         "refusing to delete relative path {}",
@@ -103,13 +116,13 @@ pub fn check_safe(path: &Path, roots: &[PathBuf]) -> Result<()> {
         path.display()
     );
 
-    let inside = roots.iter().any(|root| {
+    let inside = roots.iter().any(|(root, depth)| {
         path.strip_prefix(root)
-            .is_ok_and(|relative| relative.components().count() >= 2)
+            .is_ok_and(|relative| relative.components().count() >= *depth)
     });
     ensure!(
         inside,
-        "refusing to delete {}: not inside your home or temp folder",
+        "refusing to delete {}: not inside your home or a temp folder",
         path.display()
     );
 
@@ -120,10 +133,11 @@ pub fn check_safe(path: &Path, roots: &[PathBuf]) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn roots() -> Vec<PathBuf> {
+    fn roots() -> Vec<Root> {
         vec![
-            PathBuf::from("/Users/me"),
-            PathBuf::from("/var/folders/x/T"),
+            (PathBuf::from("/Users/me"), 2),
+            (PathBuf::from("/var/folders/x/T"), 2),
+            (PathBuf::from("/private/tmp"), 1),
         ]
     }
 
@@ -141,6 +155,16 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn check_safe_should_allow_top_level_tmp_item() {
+        assert!(check_safe(Path::new("/private/tmp/build-cache"), &roots()).is_ok());
+    }
+
+    #[test]
+    fn check_safe_should_refuse_tmp_itself() {
+        assert!(check_safe(Path::new("/private/tmp"), &roots()).is_err());
     }
 
     #[test]

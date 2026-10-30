@@ -478,6 +478,7 @@ mod tests {
         let config = ScanConfig {
             home: PathBuf::from("/Users/me"),
             temp: PathBuf::from("/tmp/me"),
+            shared_temp: PathBuf::from("/tmp"),
             project_dirs: Vec::new(),
             downloads_days: 30,
         };

@@ -306,7 +306,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_confirm(frame: &mut Frame, app: &App) {
     let items: Vec<_> = app.selected_items().collect();
     let size: u64 = items.iter().map(|item| item.size).sum();
-    let from_trash = items
+    let permanent = items
         .iter()
         .filter(|item| item.category.always_permanent())
         .count();
@@ -326,10 +326,11 @@ fn draw_confirm(frame: &mut Frame, app: &App) {
             Line::from("This cannot be undone.").fg(Color::Red).bold(),
         ],
     };
-    if app.mode == Mode::Trash && from_trash > 0 {
+    if app.mode == Mode::Trash && permanent > 0 {
         lines.push(
             Line::from(format!(
-                "{from_trash} items already in the Trash are deleted for good."
+                "{} cannot go to the Trash and are deleted for good.",
+                format::count(permanent, "item")
             ))
             .fg(Color::Yellow),
         );
